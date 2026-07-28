@@ -1,4 +1,4 @@
-# Health Assistant API — DecodeLabs Backend Development Internship (2026 Batch)
+# Health Assistant API  DecodeLabs Backend Development Internship (2026 Batch)
 
 A backend system for a health assistant application, built progressively across the DecodeLabs internship's project series. This README covers every project completed so far and will be updated as each new stage is implemented.
 
@@ -281,6 +281,121 @@ Open `http://127.0.0.1:8000/docs`.
 
 - Real credentials (database password, admin password) live in a `.env` file, excluded from version control via `.gitignore`. A `.env.example` file is provided as a safe template.
 - Passwords are hashed with Argon2id before storage — they cannot be reversed, only verified.
+
+
+
+ 
+# Project 3 — Secure Authentication System
+ 
+**Location:** `project3/`
+ 
+Adds modern authentication on top of Project 2's data layer: JWT-based login, role-protected routes, and — extending beyond the base brief — a full appointment booking and negotiation system connecting patients and doctors.
+ 
+## Features
+ 
+- **JWT authentication** for three roles: admin, doctor, patient — each login issues a signed token carrying the user's role
+- **Role-protected routes** — `require_admin`, `require_doctor`, `require_patient` dependencies gate access; missing/invalid tokens return `401`, valid-but-wrong-role returns `403`
+- **Admin-controlled staff approval** — a doctor can only register if their `staff_id` is already on an admin-managed approved list (`POST /admin/approve_staff`)
+- **Doctor search** — patients can find a doctor by name and/or specialization instead of needing to know a raw staff ID
+- **Full appointment negotiation flow** — a patient books a time; the doctor can confirm, decline, or propose an alternative time; the patient then accepts or declines that alternative
+- **Ownership checks throughout** — a doctor can only respond to/update *their own* appointments; a patient can only view/respond to *their own* — enforced by looking up the record from the JWT, never trusting an ID supplied in the request
+- Secrets (`DATABASE_URL`, `JWT_SECRET_KEY`, admin credentials) loaded from `.env`, excluded from version control
+## Authentication
+ 
+| Endpoint | Who | Returns |
+|---|---|---|
+| `POST /admin/login` | Fixed admin account | JWT (`role: admin`) |
+| `POST /doctors/login` | Registered doctor | JWT (`role: doctor`) |
+| `POST /patients/login` | Registered patient | JWT (`role: patient`) |
+ 
+Tokens are passed via `Authorization: Bearer <token>` on protected routes — in Swagger, click **Authorize** and paste the token directly (no "Bearer" prefix needed).
+ 
+## Data Model — Appointments
+ 
+| Field | Type | Notes |
+|---|---|---|
+| `appointment_id` | string | Auto-generated, format `APP-00001` |
+| `patient_id` | string | Foreign key -> `patients.patient_id` |
+| `staff_id` | string | Foreign key -> `doctors.staff_id` |
+| `appointment_date` | datetime | |
+| `appointment_time` | datetime | |
+| `proposed_time` | datetime, nullable | Set only while status is `alternative_proposed` |
+| `status` | enum | `pending`, `confirmed`, `alternative_proposed`, `declined`, `completed`, `cancelled` |
+ 
+## Appointment Lifecycle
+ 
+```
+pending
+  -> doctor confirms              -> confirmed -> completed
+  -> doctor declines              -> declined  (closed)
+  -> doctor proposes alternative  -> alternative_proposed
+                                       -> patient accepts  -> confirmed -> completed
+                                       -> patient declines -> declined   (closed)
+```
+ 
+Every path ends in either `completed` or `declined`/`cancelled` — a closed, finite state machine. If a proposed time doesn't suit the patient, they decline and book a fresh new appointment rather than an open-ended counter-negotiation.
+ 
+## Endpoints
+ 
+### Doctor Search
+**`GET /doctors/search?name=...&specialization=...`** — partial, case-insensitive match on either field. Requires any valid login.
+ 
+### Appointments
+- **`POST /appointments`** *(patient only)* — book a new appointment (always starts `pending`)
+- **`GET /appointments`** *(admin/doctor only)* — view all appointments
+- **`GET /patients/me/appointments`** *(patient only)* — view own bookings
+- **`GET /doctors/me/appointments`** *(doctor only)* — view bookings made with them
+- **`PUT /appointments/{id}/doctor-response`** *(doctor only, own appointments)* — `{"action": "confirm" | "decline" | "propose_alternative", "proposed_time": ...}`
+- **`PUT /appointments/{id}/patient-response`** *(patient only, own appointments)* — `{"action": "accept" | "decline"}`, only valid when status is `alternative_proposed`
+- **`PUT /appointments/{id}/complete`** *(doctor only, own appointments)* — marks a `confirmed` appointment as `completed`
+### Admin
+- **`POST /admin/approve_staff`** *(admin only)* — `{"staff_id", "staff_Name", "Email"}`
+- **`GET /admin/approved_staff`** *(admin only)*
+## Running Locally
+ 
+```bash
+cd project3
+pip install fastapi uvicorn sqlalchemy psycopg2-binary argon2-cffi python-dotenv "python-jose[cryptography]"
+```
+ 
+`.env` must include:
+```
+DATABASE_URL=postgresql://postgres:yourpassword@localhost:5432/health_assistant
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=yourpassword
+JWT_SECRET_KEY=generate_with_python_secrets_token_hex_32
+```
+ 
+```bash
+python -m uvicorn HealthAssistant:app --reload
+```
+Open `http://127.0.0.1:8000/docs`.
+ 
+## Known Limitations
+ 
+- No counter-negotiation loop — a declined proposed time closes the appointment; the patient must submit a new booking rather than continuing to haggle over the same slot (a deliberate scope decision, not an oversight)
+- No email/SMS notifications yet on status changes — planned as the next external-API integration
+- No automated tests yet
+---
+---
+ 
+# Roadmap — Planned for Future Projects
+ 
+- Email/SMS notifications on appointment status changes (planned external API integration)
+- Prescriptions tied to completed appointments
+- Doctor availability windows
+- Medical history / visit notes
+- Vitals tracking
+- Pagination on list endpoints
+- Automated tests (pytest)
+*This section, and the project sections above, will be updated as each new project stage is completed.*
+ 
+## Security Notes
+ 
+- Real credentials live in `.env`, excluded from version control via `.gitignore`; `.env.example` provides a safe template
+- Passwords hashed with Argon2id — irreversible, never stored or returned in plain text
+- JWT signature key (`JWT_SECRET_KEY`) is a randomly generated 32-byte value, loaded from `.env`, never hardcoded
+
 
 ## Author
 
